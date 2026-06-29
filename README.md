@@ -1,4 +1,4 @@
-# 🏪 RetailPOS — Point of Sale System
+# RetailPOS — Point of Sale System
 
 A web-based POS (Point of Sale) system I built for my SDE course project. It handles inventory management, sales checkout, and gives you a nice dashboard with sales stats. Built with Flask and SQLite.
 
@@ -162,6 +162,4 @@ This was built as part of my Software Development Engineering coursework. The pr
 
 ---
 
-## License
 
-MIT — use it however you want.
