@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}Point of Sale — RetailPOS{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="pos-layout">
+        <div class="pos-products">
+            <div class="page-header">
+                <h1>Point of Sale</h1>
+                <p>Search products and add them to the cart</p>
+            </div>
+
+            <div class="pos-search">
+                <input type="text" id="productSearch" class="form-control"
+                       placeholder="Search by product name or barcode..." autofocus>
+            </div>
+
+            <div class="product-grid" id="productGrid">
+                {% for product in products %}
+                <div class="product-tile" data-id="{{ product.id }}" data-name="{{ product.name }}"
+                     data-price="{{ product.price }}" data-stock="{{ product.stock_quantity }}"
+                     data-barcode="{{ product.barcode_id }}"
+                     onclick="addToCart(this)">
+                    <span class="product-stock">Stock: {{ product.stock_quantity }}</span>
+                    <div class="product-category">{{ product.category or 'General' }}</div>
+                    <div class="product-name">{{ product.name }}</div>
+                    <div class="product-price">${{ "%.2f"|format(product.price) }}</div>
+                </div>
+                {% endfor %}
+
+                {% if not products %}
+                <div class="empty-state" style="grid-column: 1 / -1;">
+                    <h3>No Products Available</h3>
+                    <p>Ask an admin to add products to inventory.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="pos-cart">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Cart</h3>
+                    <button class="btn btn-outline btn-sm" onclick="clearCart()" id="clearCartBtn" style="display: none;">Clear</button>
+                </div>
+
+                <div class="cart-items" id="cartItems">
+                    <div class="cart-empty" id="cartEmpty">
+                        <p>Cart is empty.<br>Click a product to add it.</p>
+                    </div>
+                </div>
+
+                <div class="cart-summary" id="cartSummary" style="display: none;">
+                    <div class="cart-total">
+                        <span class="label">Total</span>
+                        <span class="amount" id="cartTotal">$0.00</span>
+                    </div>
+                    <button class="btn btn-success btn-block" onclick="checkout()" id="checkoutBtn">
+                        Complete Checkout
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let cart = {};
+
+    function addToCart(tile) {
+        const id = tile.dataset.id;
+        const name = tile.dataset.name;
+        const price = parseFloat(tile.dataset.price);
+        const stock = parseInt(tile.dataset.stock);
+
+        if (cart[id]) {
+            if (cart[id].quantity >= stock) {
+                showFlash('danger', 'Not enough stock for ' + name + ' (' + stock + ' available)');
+                return;
+            }
+            cart[id].quantity++;
+        } else {
+            if (stock <= 0) {
+                showFlash('danger', name + ' is out of stock');
+                return;
+            }
+            cart[id] = { name, price, stock, quantity: 1 };
+        }
+        renderCart();
+    }
+
+    function updateQty(id, delta) {
+        if (!cart[id]) return;
+        cart[id].quantity += delta;
+        if (cart[id].quantity <= 0) {
+            delete cart[id];
+        } else if (cart[id].quantity > cart[id].stock) {
+            cart[id].quantity = cart[id].stock;
+            showFlash('warning', 'Max stock reached for ' + cart[id].name);
+        }
+        renderCart();
+    }
+
+    function clearCart() {
+        cart = {};
+        renderCart();
+    }
+
+    function renderCart() {
+        const itemsDiv = document.getElementById('cartItems');
+        const summaryDiv = document.getElementById('cartSummary');
+        const clearBtn = document.getElementById('clearCartBtn');
+        const totalSpan = document.getElementById('cartTotal');
+        const ids = Object.keys(cart);
+
+        if (ids.length === 0) {
+            itemsDiv.innerHTML = '<div class="cart-empty"><p>Cart is empty.<br>Click a product to add it.</p></div>';
+            summaryDiv.style.display = 'none';
+            clearBtn.style.display = 'none';
+            return;
+        }
+
+        clearBtn.style.display = 'inline-flex';
+        summaryDiv.style.display = 'block';
+
+        let html = '';
+        let total = 0;
+
+        ids.forEach(id => {
+            const item = cart[id];
+            const lineTotal = item.price * item.quantity;
+            total += lineTotal;
+            html += '<div class="cart-item">' +
+                '<div class="cart-item-info">' +
+                    '<div class="name">' + item.name + '</div>' +
+                    '<div class="price">$' + item.price.toFixed(2) + ' each</div>' +
+                '</div>' +
+                '<div class="cart-item-qty">' +
+                    '<button onclick="updateQty(\'' + id + '\', -1)">-</button>' +
+                    '<span>' + item.quantity + '</span>' +
+                    '<button onclick="updateQty(\'' + id + '\', 1)">+</button>' +
+                '</div>' +
+                '<div class="cart-item-total">$' + lineTotal.toFixed(2) + '</div>' +
+            '</div>';
+        });
+
+        itemsDiv.innerHTML = html;
+        totalSpan.textContent = '$' + total.toFixed(2);
+    }
+
+    async function checkout() {
+        const ids = Object.keys(cart);
+        if (ids.length === 0) return;
+
+        const checkoutBtn = document.getElementById('checkoutBtn');
+        checkoutBtn.disabled = true;
+        checkoutBtn.textContent = 'Processing...';
+
+        const items = ids.map(id => ({
+            product_id: parseInt(id),
+            quantity: cart[id].quantity,
+        }));
+
+        try {
+            const response = await fetch('/checkout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items }),
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                showFlash('success', 'Transaction #' + data.transaction_id + ' completed - Total: $' + data.total.toFixed(2));
+                cart = {};
+                renderCart();
+                data.items.forEach(item => {
+                    const tile = document.querySelector('.product-tile[data-id="' + item.product_id + '"]');
+                    if (tile) {
+                        const newStock = parseInt(tile.dataset.stock) - item.quantity;
+                        tile.dataset.stock = newStock;
+                        tile.querySelector('.product-stock').textContent = 'Stock: ' + newStock;
+                    }
+                });
+            } else {
+                showFlash('danger', data.error || 'Checkout failed');
+            }
+        } catch (err) {
+            showFlash('danger', 'Network error. Please try again.');
+        } finally {
+            checkoutBtn.disabled = false;
+            checkoutBtn.textContent = 'Complete Checkout';
+        }
+    }
+
+    document.getElementById('productSearch').addEventListener('input', function () {
+        const query = this.value.toLowerCase();
+        document.querySelectorAll('.product-tile').forEach(tile => {
+            const name = tile.dataset.name.toLowerCase();
+            const barcode = tile.dataset.barcode.toLowerCase();
+            tile.style.display = (name.includes(query) || barcode.includes(query)) ? '' : 'none';
+        });
+    });
+
+    function showFlash(category, message) {
+        let container = document.querySelector('.flash-messages');
+        if (!container) {
+            container = document.createElement('div');
+            container.className = 'flash-messages';
+            document.querySelector('.navbar').insertAdjacentElement('afterend', container);
+        }
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-' + category;
+        alert.textContent = message;
+        container.appendChild(alert);
+        setTimeout(() => {
+            alert.style.opacity = '0';
+            setTimeout(() => alert.remove(), 300);
+        }, 4000);
+    }
+</script>
+{% endblock %}
