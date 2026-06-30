@@ -37,23 +37,31 @@ The whole thing runs in the browser. No fancy frameworks on the frontend — jus
 ## Project Structure
 
 ```
-├── app.py                 # main flask app — all the routes live here
-├── models.py              # database models (User, Product, Transaction, etc.)
-├── config.py              # app configuration
+├── backend/
+│   ├── __init__.py        # flask app factory
+│   ├── config.py          # app configuration
+│   ├── models.py          # database models
+│   └── routes/            # separated blueprints
+│       ├── auth.py
+│       ├── dashboard.py
+│       ├── inventory.py
+│       └── pos.py
+│
+├── frontend/
+│   ├── static/
+│   │   └── style.css      # all the styling
+│   └── templates/
+│       ├── base.html      # base layout with navbar
+│       ├── login.html
+│       ├── signup.html
+│       ├── dashboard.html # admin stats + charts
+│       ├── inventory.html # product table with CRUD
+│       ├── add_product.html
+│       ├── edit_product.html
+│       └── pos.html       # cashier checkout screen
+│
+├── app.py                 # thin entry point
 ├── requirements.txt
-│
-├── static/
-│   └── style.css          # all the styling
-│
-├── templates/
-│   ├── base.html          # base layout with navbar
-│   ├── login.html
-│   ├── signup.html
-│   ├── dashboard.html     # admin stats + charts
-│   ├── inventory.html     # product table with CRUD
-│   ├── add_product.html
-│   ├── edit_product.html
-│   └── pos.html           # cashier checkout screen
 │
 ├── docs/
 │   ├── SRS.md             # software requirements spec
