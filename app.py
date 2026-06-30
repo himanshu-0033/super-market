@@ -501,6 +501,195 @@ def api_search_products():
     )
 
 
+# ─── API: Sales Data (for dashboard chart) ───────────────────
+
+
+@app.route("/api/sales_data")
+@admin_required
+def api_sales_data():
+    """Return sales data for the requested time range."""
+    range_type = request.args.get("range", "week")
+    today = date.today()
+    now = datetime.now()
+
+    labels = []
+    values = []
+
+    if range_type == "day":
+        # Hourly breakdown of today
+        for hour in range(24):
+            start = datetime(today.year, today.month, today.day, hour, 0, 0)
+            end = datetime(today.year, today.month, today.day, hour, 59, 59)
+            revenue = (
+                db.session.query(func.coalesce(func.sum(Transaction.total_amount), 0))
+                .filter(Transaction.timestamp >= start, Transaction.timestamp <= end)
+                .scalar()
+            )
+            labels.append(f"{hour:02d}:00")
+            values.append(float(revenue))
+
+    elif range_type == "week":
+        # Daily breakdown of last 7 days
+        seven_days_ago = today - timedelta(days=6)
+        daily_revenue = (
+            db.session.query(
+                func.date(Transaction.timestamp).label("day"),
+                func.sum(Transaction.total_amount).label("revenue"),
+            )
+            .filter(func.date(Transaction.timestamp) >= seven_days_ago)
+            .group_by(func.date(Transaction.timestamp))
+            .order_by(func.date(Transaction.timestamp))
+            .all()
+        )
+        revenue_map = {str(row.day): float(row.revenue) for row in daily_revenue}
+        for i in range(7):
+            d = seven_days_ago + timedelta(days=i)
+            labels.append(d.strftime("%b %d"))
+            values.append(revenue_map.get(str(d), 0))
+
+    elif range_type == "month":
+        # Daily breakdown of last 30 days
+        thirty_days_ago = today - timedelta(days=29)
+        daily_revenue = (
+            db.session.query(
+                func.date(Transaction.timestamp).label("day"),
+                func.sum(Transaction.total_amount).label("revenue"),
+            )
+            .filter(func.date(Transaction.timestamp) >= thirty_days_ago)
+            .group_by(func.date(Transaction.timestamp))
+            .order_by(func.date(Transaction.timestamp))
+            .all()
+        )
+        revenue_map = {str(row.day): float(row.revenue) for row in daily_revenue}
+        for i in range(30):
+            d = thirty_days_ago + timedelta(days=i)
+            labels.append(d.strftime("%d %b"))
+            values.append(revenue_map.get(str(d), 0))
+
+    elif range_type == "year":
+        # Monthly breakdown of last 12 months
+        for i in range(11, -1, -1):
+            # Calculate month offset
+            m = today.month - i
+            y = today.year
+            while m <= 0:
+                m += 12
+                y -= 1
+            month_start = date(y, m, 1)
+            if m == 12:
+                month_end = date(y + 1, 1, 1) - timedelta(days=1)
+            else:
+                month_end = date(y, m + 1, 1) - timedelta(days=1)
+
+            revenue = (
+                db.session.query(func.coalesce(func.sum(Transaction.total_amount), 0))
+                .filter(
+                    func.date(Transaction.timestamp) >= month_start,
+                    func.date(Transaction.timestamp) <= month_end,
+                )
+                .scalar()
+            )
+            labels.append(month_start.strftime("%b %Y"))
+            values.append(float(revenue))
+
+    return jsonify({"labels": labels, "values": values})
+
+
+# ─── API: Inventory Data (for dashboard chart) ───────────────
+
+
+@app.route("/api/inventory_data")
+@admin_required
+def api_inventory_data():
+    """Return top-selling products with configurable limit."""
+    limit = request.args.get("limit", 10, type=int)
+    if limit not in (5, 10, 20):
+        limit = 10
+
+    top_products = (
+        db.session.query(
+            Product.name,
+            func.sum(TransactionItem.quantity).label("total_qty"),
+        )
+        .join(TransactionItem, TransactionItem.product_id == Product.id)
+        .group_by(Product.id, Product.name)
+        .order_by(func.sum(TransactionItem.quantity).desc())
+        .limit(limit)
+        .all()
+    )
+
+    return jsonify({
+        "labels": [row.name for row in top_products],
+        "values": [int(row.total_qty) for row in top_products],
+    })
+
+
+# ─── API: Sales Share (doughnut — top N product proportions) ─
+
+
+@app.route("/api/sales_share")
+@admin_required
+def api_sales_share():
+    """Return sales proportion for top N products (for doughnut chart)."""
+    limit = request.args.get("limit", 5, type=int)
+    if limit not in (2, 3, 4, 5, 10, 20):
+        limit = 5
+
+    top_products = (
+        db.session.query(
+            Product.name,
+            func.sum(TransactionItem.quantity).label("total_qty"),
+        )
+        .join(TransactionItem, TransactionItem.product_id == Product.id)
+        .group_by(Product.id, Product.name)
+        .order_by(func.sum(TransactionItem.quantity).desc())
+        .limit(limit)
+        .all()
+    )
+
+    # Calculate "Others" remainder
+    total_sold = (
+        db.session.query(func.coalesce(func.sum(TransactionItem.quantity), 0)).scalar()
+    )
+    top_total = sum(int(row.total_qty) for row in top_products)
+    others = int(total_sold) - top_total
+
+    labels = [row.name for row in top_products]
+    values = [int(row.total_qty) for row in top_products]
+
+    if others > 0:
+        labels.append("Others")
+        values.append(others)
+
+    return jsonify({"labels": labels, "values": values})
+
+
+# ─── API: Stock vs Sold (available vs sold comparison) ───────
+
+
+@app.route("/api/stock_vs_sold")
+@admin_required
+def api_stock_vs_sold():
+    """Return available stock vs total units sold for each product."""
+    products = (
+        db.session.query(
+            Product.name,
+            Product.stock_quantity,
+            func.coalesce(func.sum(TransactionItem.quantity), 0).label("total_sold"),
+        )
+        .outerjoin(TransactionItem, TransactionItem.product_id == Product.id)
+        .group_by(Product.id, Product.name, Product.stock_quantity)
+        .order_by(Product.name)
+        .all()
+    )
+
+    return jsonify({
+        "labels": [row.name for row in products],
+        "available": [int(row.stock_quantity) for row in products],
+        "sold": [int(row.total_sold) for row in products],
+    })
+
+
 # ═══════════════════════════════════════════════════════════════
 #  Bootstrap
 # ═══════════════════════════════════════════════════════════════

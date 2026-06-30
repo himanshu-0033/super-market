@@ -31,19 +31,68 @@
         </div>
     </div>
 
+    <!-- Row 1: Sales Revenue + Top Products (bar) -->
+    <div class="dashboard-grid">
+        <div class="card chart-card chart-card-sales">
+            <div class="card-header">
+                <h3>Sales Revenue</h3>
+                <div class="pill-toggle" id="salesToggle">
+                    <button class="pill-btn" data-range="day">Day</button>
+                    <button class="pill-btn active" data-range="week">Week</button>
+                    <button class="pill-btn" data-range="month">Month</button>
+                    <button class="pill-btn" data-range="year">Year</button>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="revenueChart"></canvas>
+            </div>
+        </div>
+
+        <div class="card chart-card chart-card-inventory">
+            <div class="card-header">
+                <h3>Top Products</h3>
+                <select class="scale-select" id="inventoryScale">
+                    <option value="5">Top 5</option>
+                    <option value="10" selected>Top 10</option>
+                    <option value="20">Top 20</option>
+                </select>
+            </div>
+            <div class="chart-container">
+                <canvas id="topProductsChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 2: Sales Share (doughnut) + Stock vs Sold (grouped bar) -->
     <div class="dashboard-grid">
         <div class="card chart-card">
             <div class="card-header">
-                <h3>Daily Revenue (Last 7 Days)</h3>
+                <h3>Sales Share by Product</h3>
+                <select class="scale-select" id="shareScale">
+                    <option value="2">Top 2</option>
+                    <option value="3">Top 3</option>
+                    <option value="4">Top 4</option>
+                    <option value="5" selected>Top 5</option>
+                    <option value="10">Top 10</option>
+                    <option value="20">Top 20</option>
+                </select>
             </div>
-            <canvas id="revenueChart"></canvas>
+            <div class="chart-container">
+                <canvas id="salesShareChart"></canvas>
+            </div>
         </div>
 
         <div class="card chart-card">
             <div class="card-header">
-                <h3>Top Selling Products</h3>
+                <h3>Available vs Sold</h3>
+                <span class="chart-legend-inline">
+                    <span class="legend-dot" style="background: #4361ee;"></span> Available
+                    <span class="legend-dot" style="background: #2d9c5a; margin-left: 12px;"></span> Sold
+                </span>
             </div>
-            <canvas id="topProductsChart"></canvas>
+            <div class="chart-container">
+                <canvas id="stockVsSoldChart"></canvas>
+            </div>
         </div>
     </div>
 
@@ -80,14 +129,36 @@
         primary: '#4361ee',
         primaryBg: 'rgba(67, 97, 238, 0.08)',
         green: '#2d9c5a',
+        greenBg: 'rgba(45, 156, 90, 0.15)',
         yellow: '#e6a817',
         red: '#d64545',
         text: '#6b7280',
         grid: 'rgba(0, 0, 0, 0.04)',
     };
 
-    // Daily Revenue
-    new Chart(document.getElementById('revenueChart').getContext('2d'), {
+    const BAR_COLORS = [
+        COLORS.primary, COLORS.green, COLORS.yellow,
+        COLORS.red, '#7c3aed', '#0ea5e9',
+        '#f97316', '#ec4899', '#14b8a6', '#eab308',
+        '#6366f1', '#8b5cf6', '#06b6d4', '#84cc16',
+        '#f43f5e', '#a855f7', '#22d3ee', '#facc15',
+        '#fb923c', '#a3e635'
+    ];
+
+    const DOUGHNUT_COLORS = [
+        '#4361ee', '#2d9c5a', '#e6a817', '#d64545',
+        '#7c3aed', '#0ea5e9', '#f97316', '#ec4899',
+        '#14b8a6', '#eab308', '#6366f1', '#8b5cf6',
+        '#06b6d4', '#84cc16', '#f43f5e', '#a855f7',
+        '#22d3ee', '#facc15', '#fb923c', '#a3e635',
+        '#9ca3af'  /* Others = gray */
+    ];
+
+    // ═══════════════════════════════════════════════════════════
+    //  1. Revenue Chart (line)
+    // ═══════════════════════════════════════════════════════════
+    const revenueCtx = document.getElementById('revenueChart').getContext('2d');
+    let revenueChart = new Chart(revenueCtx, {
         type: 'line',
         data: {
             labels: {{ daily_labels | tojson }},
@@ -109,25 +180,38 @@
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-                x: { ticks: { color: COLORS.text, font: { size: 11 } }, grid: { color: COLORS.grid } },
-                y: { ticks: { color: COLORS.text, font: { size: 11 }, callback: v => '$' + v }, grid: { color: COLORS.grid } },
+                x: { ticks: { color: COLORS.text, font: { size: 10 }, maxRotation: 45 }, grid: { color: COLORS.grid } },
+                y: { ticks: { color: COLORS.text, font: { size: 10 }, callback: v => '$' + v }, grid: { color: COLORS.grid } },
             },
         },
     });
 
-    // Top Products
-    new Chart(document.getElementById('topProductsChart').getContext('2d'), {
+    document.getElementById('salesToggle').addEventListener('click', function(e) {
+        const btn = e.target.closest('.pill-btn');
+        if (!btn) return;
+        this.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        fetch(`/api/sales_data?range=${btn.dataset.range}`)
+            .then(r => r.json())
+            .then(d => {
+                revenueChart.data.labels = d.labels;
+                revenueChart.data.datasets[0].data = d.values;
+                revenueChart.update();
+            });
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    //  2. Top Products Chart (horizontal bar)
+    // ═══════════════════════════════════════════════════════════
+    const productsCtx = document.getElementById('topProductsChart').getContext('2d');
+    let productsChart = new Chart(productsCtx, {
         type: 'bar',
         data: {
             labels: {{ top_labels | tojson }},
             datasets: [{
                 label: 'Units Sold',
                 data: {{ top_values | tojson }},
-                backgroundColor: [
-                    COLORS.primary, COLORS.green, COLORS.yellow,
-                    COLORS.red, '#7c3aed', '#0ea5e9',
-                    '#f97316', '#ec4899', '#14b8a6', '#eab308'
-                ],
+                backgroundColor: BAR_COLORS.slice(0, {{ top_labels | length }}),
                 borderRadius: 4,
             }]
         },
@@ -137,10 +221,139 @@
             indexAxis: 'y',
             plugins: { legend: { display: false } },
             scales: {
-                x: { ticks: { color: COLORS.text, font: { size: 11 } }, grid: { color: COLORS.grid } },
-                y: { ticks: { color: COLORS.text, font: { size: 11 } }, grid: { display: false } },
+                x: { ticks: { color: COLORS.text, font: { size: 10 } }, grid: { color: COLORS.grid } },
+                y: { ticks: { color: COLORS.text, font: { size: 10 } }, grid: { display: false } },
             },
         },
     });
+
+    document.getElementById('inventoryScale').addEventListener('change', function() {
+        fetch(`/api/inventory_data?limit=${this.value}`)
+            .then(r => r.json())
+            .then(d => {
+                productsChart.data.labels = d.labels;
+                productsChart.data.datasets[0].data = d.values;
+                productsChart.data.datasets[0].backgroundColor = BAR_COLORS.slice(0, d.labels.length);
+                productsChart.update();
+            });
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    //  3. Sales Share Chart (doughnut)
+    // ═══════════════════════════════════════════════════════════
+    const shareCtx = document.getElementById('salesShareChart').getContext('2d');
+    let salesShareChart = new Chart(shareCtx, {
+        type: 'doughnut',
+        data: {
+            labels: [],
+            datasets: [{
+                data: [],
+                backgroundColor: DOUGHNUT_COLORS,
+                borderWidth: 2,
+                borderColor: '#fff',
+                hoverOffset: 6,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '55%',
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: {
+                        font: { size: 11 },
+                        color: COLORS.text,
+                        padding: 10,
+                        usePointStyle: true,
+                        pointStyleWidth: 8,
+                    },
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                            const pct = total ? ((ctx.parsed / total) * 100).toFixed(1) : 0;
+                            return `${ctx.label}: ${ctx.parsed} units (${pct}%)`;
+                        }
+                    }
+                }
+            },
+        },
+    });
+
+    // Load initial data
+    function loadSalesShare(limit) {
+        fetch(`/api/sales_share?limit=${limit}`)
+            .then(r => r.json())
+            .then(d => {
+                salesShareChart.data.labels = d.labels;
+                salesShareChart.data.datasets[0].data = d.values;
+                salesShareChart.data.datasets[0].backgroundColor = DOUGHNUT_COLORS.slice(0, d.labels.length);
+                salesShareChart.update();
+            });
+    }
+    loadSalesShare(5);
+
+    document.getElementById('shareScale').addEventListener('change', function() {
+        loadSalesShare(this.value);
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    //  4. Stock vs Sold Chart (grouped bar)
+    // ═══════════════════════════════════════════════════════════
+    const stockCtx = document.getElementById('stockVsSoldChart').getContext('2d');
+    let stockVsSoldChart = new Chart(stockCtx, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Available',
+                    data: [],
+                    backgroundColor: 'rgba(67, 97, 238, 0.7)',
+                    borderRadius: 4,
+                },
+                {
+                    label: 'Sold',
+                    data: [],
+                    backgroundColor: 'rgba(45, 156, 90, 0.7)',
+                    borderRadius: 4,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            return `${ctx.dataset.label}: ${ctx.parsed.y} units`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { ticks: { color: COLORS.text, font: { size: 10 } }, grid: { display: false } },
+                y: {
+                    ticks: { color: COLORS.text, font: { size: 10 } },
+                    grid: { color: COLORS.grid },
+                    beginAtZero: true,
+                },
+            },
+        },
+    });
+
+    // Load initial data
+    fetch('/api/stock_vs_sold')
+        .then(r => r.json())
+        .then(d => {
+            stockVsSoldChart.data.labels = d.labels;
+            stockVsSoldChart.data.datasets[0].data = d.available;
+            stockVsSoldChart.data.datasets[1].data = d.sold;
+            stockVsSoldChart.update();
+        });
 </script>
 {% endblock %}
